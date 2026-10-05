@@ -104,6 +104,50 @@ model Property {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
+  // --- Listing details (99acres / Housing.com style) -----------------
+  // All additive: every column is nullable or has a default, so existing
+  // rows and the bulk-import path (which writes Property directly) are
+  // unaffected. `area`/`areaSqft` above remain the headline area; the
+  // columns below are the finer breakdown. Select-style fields hold the
+  // option strings defined in src/lib/propertyDetails.ts.
+  purpose            String  @default("Sale") // Sale | Rent
+  ownershipType      String? // Freehold | Leasehold
+  availabilityStatus String? // Ready to Move | Under Construction
+  possessionDate     String? // YYYY-MM-DD; only meaningful when Under Construction
+
+  locality         String?
+  city             String  @default("Bengaluru")
+  pincode          String? // 6 digits
+  landmark         String?
+  nearbyFacilities String  @default("[]") // JSON stringified array
+
+  plotArea    Float? // sqft
+  builtUpArea Float? // sqft
+  carpetArea  Float? // sqft
+  dimLength   Float? // ft
+  dimWidth    Float? // ft
+  roadWidth   Float? // ft
+
+  totalFloors  String? // free text, e.g. "Ground + 4"
+  floorDetails String?
+  balconies    Int?
+  parkingCars  Int?
+  parkingBikes Int?
+  propertyAge  String?
+  furnishing   String? // Unfurnished | Semi-Furnished | Fully Furnished
+  facing       String? // East | West | North | South | North-East | ...
+
+  waterSupply String?
+  electricity String?
+  lift        String? // Yes | No
+  powerBackup String? // None | Partial | Full
+  amenities   String  @default("[]") // JSON stringified array
+
+  // Full rupee amount (NOT lakhs). price/priceValueLakh above are still
+  // what the public site filters and displays on; this is the exact figure.
+  expectedPrice Float?
+  negotiable    String? // Yes | No
+
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id])
 
@@ -378,6 +422,8 @@ model Lead {
   notes    LeadNote[]
   timeline LeadTimelineEntry[]
 
+  loanApplications LoanApplication[]
+
   @@index([stage])
   @@index([agentId])
   @@index([createdAt])
@@ -422,4 +468,66 @@ model LeadTimelineEntry {
   description String?
   author      String?
   createdAt   DateTime @default(now())
+}
+
+// ============================================================
+// Loan applications — the single store for "Check Your Loan
+// Eligibility" submissions. The public website form and the CRM's
+// "New application" form both go through src/lib/loanApplications.ts, so
+// they land in this same table (and the same Lead) with no duplicates.
+//
+// status: NEW, DOCS_PENDING, DOCS_COMPLETE, IN_PROCESS, APPROVED,
+// REJECTED, CLOSED. (The website had no statuses before — it only
+// created a Lead — so this set is new.)
+// applicantType: "Salaried" | "Self Employed" (matches the website form).
+// source: "Website" | "CRM".
+// ============================================================
+model LoanApplication {
+  id            String         @id @default(uuid())
+  name          String
+  phone         String
+  email         String
+  applicantType String
+  status        String         @default("NEW")
+  source        String         @default("Website")
+  notes         String?
+  leadId        String?
+  lead          Lead?          @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  documents     LoanDocument[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  @@index([status])
+  @@index([phone])
+  @@index([leadId])
+  @@index([createdAt])
+}
+
+model LoanDocument {
+  id            String          @id @default(uuid())
+  applicationId String
+  application   LoanApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  key           String // stable id from src/lib/loanDocuments.ts
+  label         String
+  received      Boolean         @default(false)
+  receivedAt    DateTime?
+  fileUrl       String?
+
+  @@unique([applicationId, key])
+}
+
+// ============================================================
+// Locality — the single, admin-editable list of Bengaluru areas used by
+// the website's location filter AND every CRM picker (Add/Edit Property,
+// lead forms, Excel import). Seeded from src/lib/bengaluruLocalities.ts
+// (prisma/seed-localities.ts). Property.location / Lead.location stay
+// free text so legacy values keep loading; matching is by name.
+// zone: North | South | East | West | Central (optional).
+// ============================================================
+model Locality {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  zone      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

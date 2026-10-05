@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { requireRole, CAN } from "@/lib/authz";
+import { propertyKindFor, validateDetailsBody, detailsToPrismaData } from "@/lib/propertyDetails";
+import { priceDisplay, rupeesToLakh } from "@/lib/formatPrice";
 
 // SECURITY: unexpected exceptions are logged server-side but never echoed
 // to the client — raw Prisma errors leak schema and connection details.
@@ -26,6 +28,7 @@ export async function GET(
         auctionInfo: true,
         loanEligibility: true,
         images: { orderBy: { order: "asc" } },
+        videos: true,
       },
     });
 
@@ -61,6 +64,41 @@ export async function PUT(
       return NextResponse.json({ error: "Property not found" }, { status: 404 });
     }
 
+    // Same rules as the create route / wizard. purpose + city are NOT NULL
+    // columns that other callers (the list page's feature/archive
+    // toggles) pass straight through from the stored row; an absent value
+    // falls back to what is already saved rather than failing.
+    if (typeof body.title !== "string" || body.title.trim().length < 3) {
+      return NextResponse.json({ error: "Property name must be at least 3 characters." }, { status: 400 });
+    }
+    if (!body.propertyTypeId) {
+      return NextResponse.json({ error: "Property type is required." }, { status: 400 });
+    }
+    // Price is whole rupees (expectedPrice). A caller that omits it
+    // (older client, un-migrated row) keeps the stored value, falling back
+    // to the legacy lakh figure converted to rupees.
+    const detailsInput = {
+      ...body,
+      purpose: body.purpose ?? existing.purpose,
+      city: body.city ?? existing.city,
+      expectedPrice:
+        body.expectedPrice ?? existing.expectedPrice ?? Math.round(existing.priceValueLakh * 100000),
+    };
+    const detailsError = validateDetailsBody(detailsInput);
+    if (detailsError) {
+      return NextResponse.json({ error: detailsError }, { status: 400 });
+    }
+    const propertyType = await prisma.propertyType.findUnique({
+      where: { id: body.propertyTypeId },
+      select: { name: true },
+    });
+    if (!propertyType) {
+      return NextResponse.json({ error: "Property type is required." }, { status: 400 });
+    }
+    const details = detailsToPrismaData(detailsInput, propertyKindFor(propertyType.name));
+    const expectedPrice = Math.round(Number(detailsInput.expectedPrice));
+    const priceValueLakh = rupeesToLakh(expectedPrice);
+
     // Same guard as the create route: only accept a hand-entered slug if
     // it's actually URL-safe (a stray paste like a Google Maps link would
     // otherwise silently break this property's own /properties/[slug]
@@ -76,19 +114,21 @@ export async function PUT(
         title: body.title,
         slug: safeCustomSlug,
         location: body.location,
-        price: body.price,
-        priceValueLakh: parseFloat(body.priceValueLakh || "0"),
+        price: priceDisplay(expectedPrice, details.purpose),
+        priceValueLakh,
         propertyTypeId: body.propertyTypeId,
         status: body.status,
         featured: body.featured,
         beds: parseInt(body.beds || "0"),
         baths: parseInt(body.baths || "0"),
         area: body.area,
-        areaSqft: parseInt(body.areaSqft || "0"),
+        areaSqft: parseInt(body.areaSqft || "0") || 0,
         description: body.description,
         address: body.address,
         mapQuery: body.mapQuery,
         categoryId: body.categoryId,
+        ...details,
+        expectedPrice,
         // "" (the wizard's "None" option) is not a valid Builder id —
         // Prisma needs an actual null to clear the relation, not an
         // empty string, which would fail the foreign-key write.
@@ -180,6 +220,18 @@ export async function PUT(
               })),
             });
           }
+        })()
+      );
+    }
+
+    // Only touched when the caller sent videoUrl (the wizard always does;
+    // the list page's feature/archive toggles don't).
+    if (body.videoUrl !== undefined) {
+      followUpWrites.push(
+        (async () => {
+          await prisma.propertyVideo.deleteMany({ where: { propertyId: id } });
+          const url = typeof body.videoUrl === "string" ? body.videoUrl.trim() : "";
+          if (url) await prisma.propertyVideo.create({ data: { url, propertyId: id } });
         })()
       );
     }

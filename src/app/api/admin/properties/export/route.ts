@@ -30,6 +30,7 @@ export async function GET() {
         builderName: p.builder?.name ?? null,
         price: p.price,
         priceValueLakh: p.priceValueLakh,
+        expectedPrice: p.expectedPrice,
         location: p.location,
         address: p.address,
         mapQuery: p.mapQuery,

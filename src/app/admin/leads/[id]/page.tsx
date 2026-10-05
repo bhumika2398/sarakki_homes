@@ -36,6 +36,7 @@ import {
 } from "@/lib/crm";
 import { cn } from "@/lib/utils";
 import { DealRevenuePanel } from "@/components/admin/revenue/DealRevenuePanel";
+import { CorrectLeadModal } from "@/components/admin/CorrectLeadModal";
 
 interface LeadDetail {
   id: string;
@@ -82,6 +83,9 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
   const { data: session } = useSession();
   const role = (session?.user as { role?: string } | undefined)?.role;
   const canViewRevenue = role === "ADMIN" || role === "MANAGER";
+  const canCorrect = role === "ADMIN" || role === "MANAGER";
+  const [correctOpen, setCorrectOpen] = useState(false);
+  const [correctNotice, setCorrectNotice] = useState("");
   const [lead, setLead] = useState<LeadDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("notes");
@@ -250,6 +254,15 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
         <ArrowLeft size={13} /> Back to Leads
       </Link>
 
+      {correctNotice && (
+        <div className="flex items-start justify-between gap-3 rounded-sm border border-crm-gold/30 bg-crm-gold/10 px-4 py-3 text-sm text-crm-text">
+          <span>{correctNotice}</span>
+          <button onClick={() => setCorrectNotice("")} aria-label="Dismiss" className="text-crm-text-secondary hover:text-crm-text">
+            ×
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
@@ -278,6 +291,11 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
         </div>
 
         <div className="flex items-center gap-2">
+          {canCorrect && (
+            <button type="button" onClick={() => setCorrectOpen(true)} className="crm-btn-secondary">
+              <span>Correct details</span>
+            </button>
+          )}
           <select
             value={lead.stage}
             onChange={(e) => patchLead({ stage: e.target.value })}
@@ -576,6 +594,26 @@ export default function LeadDetailPage({ params }: { params: Promise<{ id: strin
           )}
         </div>
       </div>
+
+      {canCorrect && (
+        <CorrectLeadModal
+          lead={lead}
+          open={correctOpen}
+          onClose={() => setCorrectOpen(false)}
+          onSaved={async ({ changed, loanApplicationsUpdated }) => {
+            setCorrectOpen(false);
+            await fetchLead();
+            setTab("timeline");
+            setCorrectNotice(
+              changed.length === 0
+                ? "No changes."
+                : `Saved ${changed.length} correction${changed.length === 1 ? "" : "s"}.${
+                    loanApplicationsUpdated ? ` ${loanApplicationsUpdated} open loan application(s) updated to match.` : ""
+                  }`
+            );
+          }}
+        />
+      )}
 
       <ConfirmDialog
         open={deleteOpen}

@@ -4,7 +4,9 @@ import {
   DEFAULT_TYPE,
   PROPERTY_STATUS_VALUES,
 } from "./columnMapping";
-import { firstNumber, parseBathrooms, parseBhk, parsePrice, parseSqft } from "./fieldResolver";
+import { firstNumber, parseBathrooms, parseBhk, parsePrice, parsePriceRupees, parseSqft } from "./fieldResolver";
+import { formatRupees, looksLikeLakhs, rupeesToLakh } from "@/lib/formatPrice";
+import { matchLocality } from "@/lib/localityMatch";
 import type { RawImportRow } from "./workbook";
 
 // A null on any of these means "the sheet didn't give this" — on an
@@ -21,7 +23,11 @@ export interface ValidatedRowData {
   builderName: string | null;
   price: string | null;
   priceValueLakh: number | null;
+  /** Whole rupees — the source of truth; price/priceValueLakh derive from it. */
+  expectedPrice: number | null;
   location: string | null;
+  /** Locality-list name when the Location text matched one; null otherwise. */
+  locality: string | null;
   address: string | null;
   mapQuery: string | null;
   beds: number | null;
@@ -58,6 +64,8 @@ export interface ReferenceData {
   categories: Map<string, { id: string; title: string }>;
   builders: Map<string, { id: string; name: string }>;
   propertyTypes: Map<string, { id: string; name: string }>;
+  /** Shared Bengaluru locality list. */
+  localities?: string[];
   existingPropertyIds: Map<string, string>;
 }
 
@@ -187,20 +195,35 @@ export function validateAndResolveRows(rawRows: RawImportRow[], ref: ReferenceDa
     }
 
     // --- price ----------------------------------------------------------
+    // Price is whole rupees. Text with a unit ("1.25 Cr", "93 Lakhs") is
+    // converted; a bare number is rupees. The deprecated "Price in Lakh"
+    // column still wins when present, so old sheets import unchanged.
     const priceRaw = (v.price ?? "").trim();
     let price: string | null = null;
     let priceValueLakh: number | null = null;
-    if (priceRaw) {
-      const parsed = parsePrice(priceRaw);
-      price = parsed.display;
-      priceValueLakh = parsed.lakh;
+    let expectedPrice: number | null = null;
+    const explicitLakh = firstNumber((v.priceValueLakh ?? "").trim());
+    if (explicitLakh !== null && explicitLakh > 0) {
+      expectedPrice = Math.round(explicitLakh * 100000);
+    } else if (priceRaw) {
+      const parsed = parsePriceRupees(priceRaw);
+      expectedPrice = parsed.rupees;
+      if (parsed.rupees !== null && parsed.unitless && looksLikeLakhs(parsed.rupees, "Sale")) {
+        notes.push(`Price "${priceRaw}" is under ₹1,00,000 — imported as rupees. If it's in lakhs, correct the sheet.`);
+        bump("price-small");
+      }
+    }
+    if (expectedPrice !== null && expectedPrice > 0) {
+      price = formatRupees(expectedPrice);
+      priceValueLakh = rupeesToLakh(expectedPrice);
+    } else if (priceRaw) {
+      // Per-sqft or otherwise non-total quote: keep the text, no numeric price.
+      price = parsePrice(priceRaw).display;
+      expectedPrice = null;
     } else if (action === "create") {
       price = DEFAULT_PRICE_TEXT;
       bump("price-missing");
     }
-    // An explicit numeric "price in lakh" column always wins if present.
-    const explicitLakh = firstNumber((v.priceValueLakh ?? "").trim());
-    if (explicitLakh !== null && explicitLakh >= 0) priceValueLakh = explicitLakh;
 
     // --- property type — same resolution shape as Category above -------
     let propertyTypeId: string | null = null;
@@ -243,6 +266,17 @@ export function validateAndResolveRows(rawRows: RawImportRow[], ref: ReferenceDa
     if (areaSqft === null && area) areaSqft = parseSqft(area);
 
     const location = (v.location ?? "").trim() || null;
+    // Report-don't-overwrite: the Location text is always kept as given;
+    // a locality is only recorded when it matches the shared list.
+    let locality: string | null = null;
+    if (location && ref.localities && ref.localities.length > 0) {
+      const m = matchLocality(location, ref.localities);
+      if (m) locality = m.name;
+      else {
+        notes.push(`Location "${location}" isn't on the Bengaluru locality list — kept as typed.`);
+        bump("location-unmatched");
+      }
+    }
     const address = (v.address ?? "").trim() || null;
     const mapQuery = (v.mapQuery ?? "").trim() || null;
 
@@ -288,7 +322,9 @@ export function validateAndResolveRows(rawRows: RawImportRow[], ref: ReferenceDa
         builderName,
         price,
         priceValueLakh,
+        expectedPrice,
         location,
+        locality,
         address,
         mapQuery,
         beds,
@@ -308,6 +344,8 @@ export function validateAndResolveRows(rawRows: RawImportRow[], ref: ReferenceDa
     "category-guessed": (n) => `${n} row${n === 1 ? "" : "s"} had a Category that doesn't exist — imported into "${DEFAULT_CATEGORY_TITLE}".`,
     "category-kept": (n) => `${n} existing propert${n === 1 ? "y" : "ies"} had an unknown Category — their category was left unchanged.`,
     "builder-missing": (n) => `${n} row${n === 1 ? "" : "s"} named a Builder that doesn't exist — left unset.`,
+    "price-small": (n) => `${n} row${n === 1 ? "" : "s"} had a Price under ₹1,00,000 — imported as rupees (check they weren't typed in lakhs).`,
+    "location-unmatched": (n) => `${n} row${n === 1 ? "" : "s"} had a Location that isn't on the Bengaluru locality list — kept as typed, no locality set.`,
     "price-missing": (n) => `${n} row${n === 1 ? "" : "s"} had no Price — set to "${DEFAULT_PRICE_TEXT}".`,
     "type-defaulted": (n) => `${n} row${n === 1 ? "" : "s"} had no Property Type — imported as "${DEFAULT_TYPE}".`,
     "type-guessed": (n) => `${n} row${n === 1 ? "" : "s"} had a Property Type that doesn't exist — imported as "${DEFAULT_TYPE}".`,

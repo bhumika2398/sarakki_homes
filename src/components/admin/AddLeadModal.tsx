@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { LocalityCombobox } from "@/components/admin/LocalityCombobox";
 import { motion, AnimatePresence } from "framer-motion";
 import { Loader2, X } from "lucide-react";
 import {
@@ -37,6 +38,15 @@ export function AddLeadModal({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [localities, setLocalities] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (!open || localities.length > 0) return;
+    fetch("/api/localities")
+      .then((r) => r.json())
+      .then((d) => setLocalities(d.localities ?? []))
+      .catch(() => {});
+  }, [open, localities.length]);
 
   const update = (key: string, value: string) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -152,11 +162,11 @@ export function AddLeadModal({
                 </div>
                 <div className="space-y-1.5">
                   <label className={labelClass}>Location</label>
-                  <input
-                    className={inputClass}
+                  <LocalityCombobox
                     value={form.location}
-                    onChange={(e) => update("location", e.target.value)}
-                    placeholder="Whitefield"
+                    onChange={(next) => update("location", next)}
+                    options={localities}
+                    placeholder="Search locality…"
                   />
                 </div>
               </div>

@@ -22,6 +22,8 @@ import {
   Target,
   CheckSquare,
   UserCog,
+  Landmark,
+  MapPin,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -59,6 +61,7 @@ const NAV_GROUPS = [
       { label: "Categories", href: "/admin/categories", icon: Tags },
       { label: "Builders", href: "/admin/builders", icon: Hammer },
       { label: "Property Types", href: "/admin/property-types", icon: Home },
+      { label: "Localities", href: "/admin/localities", icon: MapPin },
     ],
   },
   {
@@ -66,6 +69,7 @@ const NAV_GROUPS = [
     items: [
       { label: "Leads", href: "/admin/leads", icon: Target },
       { label: "Tasks", href: "/admin/tasks", icon: CheckSquare },
+      { label: "Loan Applications", href: "/admin/loan-applications", icon: Landmark },
     ],
   },
   {

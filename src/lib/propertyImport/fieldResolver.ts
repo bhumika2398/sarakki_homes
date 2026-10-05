@@ -165,6 +165,24 @@ export function parsePrice(raw: string): { display: string; lakh: number | null 
   return { display, lakh: null };
 }
 
+/** Price text -> whole rupees (the CRM's single price unit).
+ *   "1.25 Cr" -> 12500000     "93 Lakhs" -> 9300000
+ *   "₹39,91,000" / "12500000" -> as written (a bare number is rupees)
+ *   "9,000/sq.ft"             -> null (per-sqft quotes aren't a total)
+ *  `unitless` flags a bare number so the caller can warn when it's small
+ *  enough to have been typed in lakhs. */
+export function parsePriceRupees(raw: string): { rupees: number | null; unitless: boolean } {
+  const lower = raw.trim().toLowerCase();
+  const numMatch = lower.replace(/,/g, "").match(/\d+(\.\d+)?/);
+  if (!numMatch) return { rupees: null, unitless: false };
+  const value = Number(numMatch[0]);
+  if (!Number.isFinite(value) || value <= 0) return { rupees: null, unitless: false };
+  if (/\/\s*(sq|sft|sqft|sq\.?\s*ft)/.test(lower)) return { rupees: null, unitless: false };
+  if (/\bcr\b|crore/.test(lower)) return { rupees: Math.round(value * 10000000), unitless: false };
+  if (/\blakh|\blac|\bl\b/.test(lower)) return { rupees: Math.round(value * 100000), unitless: false };
+  return { rupees: Math.round(value), unitless: true };
+}
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }

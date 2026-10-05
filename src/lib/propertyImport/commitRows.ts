@@ -1,5 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { priceDisplay } from "@/lib/formatPrice";
 import type { ValidRow } from "./validateRows";
 
 export interface CommitRowResult {
@@ -78,6 +79,8 @@ export async function commitRowsChunk(rows: ValidRow[], userId: string): Promise
             location: d.location ?? "",
             price: d.price ?? "Price on request",
             priceValueLakh: d.priceValueLakh ?? 0,
+            expectedPrice: d.expectedPrice,
+            locality: d.locality,
             propertyTypeId: d.propertyTypeId!,
             // Client decision: imported properties should appear on the
             // website immediately rather than sit as an unreviewed draft
@@ -123,6 +126,14 @@ export async function commitRowsChunk(rows: ValidRow[], userId: string): Promise
         if (d.propertyTypeId !== null) updateData.propertyType = { connect: { id: d.propertyTypeId } };
         if (d.categoryId !== null) updateData.category = { connect: { id: d.categoryId } };
         if (d.priceValueLakh !== null) updateData.priceValueLakh = d.priceValueLakh;
+        if (d.expectedPrice !== null) {
+          updateData.expectedPrice = d.expectedPrice;
+          // Rent listings show "/ month"; the sheet has no Purpose column,
+          // so honour the property's existing purpose.
+          const current = await prisma.property.findUnique({ where: { id: row.targetId! }, select: { purpose: true } });
+          updateData.price = priceDisplay(d.expectedPrice, current?.purpose);
+        }
+        if (d.locality !== null) updateData.locality = d.locality;
         if (d.location !== null) updateData.location = d.location;
         if (d.address !== null) updateData.address = d.address;
         if (d.mapQuery !== null) updateData.mapQuery = d.mapQuery;

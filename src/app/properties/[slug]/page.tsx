@@ -8,6 +8,7 @@ import { PropertyGallery } from "@/components/property/PropertyGallery";
 import { PropertyOverview } from "@/components/property/PropertyOverview";
 import { PropertyMap } from "@/components/property/PropertyMap";
 import { PropertyAmenities } from "@/components/property/PropertyAmenities";
+import { PropertyDetailsTable } from "@/components/property/PropertyDetailsTable";
 import { InvestmentHighlights } from "@/components/property/InvestmentHighlights";
 import { AuctionInfoCard } from "@/components/property/AuctionInfoCard";
 import { LoanEligibilityCard } from "@/components/property/LoanEligibilityCard";
@@ -49,7 +50,7 @@ export default async function PropertyDetailPage({
   const { slug } = await params;
   const result = await getPropertyBySlug(slug);
   if (!result) notFound();
-  const { property, galleryImages } = result;
+  const { property, galleryImages, details } = result;
 
   const related = await getRelatedProperties(property);
 
@@ -72,6 +73,10 @@ export default async function PropertyDetailPage({
             <div className="flex flex-col gap-14 lg:col-span-2">
               <RevealOnScroll>
                 <PropertyOverview property={property} />
+              </RevealOnScroll>
+
+              <RevealOnScroll>
+                <PropertyDetailsTable sections={details} />
               </RevealOnScroll>
 
               <RevealOnScroll>

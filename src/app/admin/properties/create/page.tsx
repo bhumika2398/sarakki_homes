@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { PropertyWizard } from "@/components/admin/PropertyWizard";
+import { getLocalityNames } from "@/lib/localities";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +21,8 @@ export default async function CreatePropertyPage() {
     orderBy: { name: "asc" },
   });
 
+  const localities = await getLocalityNames();
+
   return (
     <div className="space-y-6">
       <div>
@@ -31,7 +34,7 @@ export default async function CreatePropertyPage() {
         </p>
       </div>
 
-      <PropertyWizard categories={categories} builders={builders} propertyTypes={propertyTypes} />
+      <PropertyWizard categories={categories} builders={builders} propertyTypes={propertyTypes} localities={localities} />
     </div>
   );
 }

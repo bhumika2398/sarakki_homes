@@ -3,6 +3,8 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { prisma } from "@/lib/prisma";
 import { Prisma } from "@prisma/client";
 import { requireRole, CAN } from "@/lib/authz";
+import { propertyKindFor, validateDetailsBody, detailsToPrismaData } from "@/lib/propertyDetails";
+import { priceDisplay, rupeesToLakh } from "@/lib/formatPrice";
 
 // SECURITY: unexpected exceptions are logged server-side but never echoed
 // to the client — raw Prisma errors leak schema and connection details.
@@ -88,6 +90,46 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
 
+    // Server-side counterpart of the wizard's zod schema (same rules for
+    // the detail fields via src/lib/propertyDetails.ts). Required:
+    // Property Type, Purpose, Title, City, Price.
+    if (typeof body.title !== "string" || body.title.trim().length < 3) {
+      return NextResponse.json({ error: "Property name must be at least 3 characters." }, { status: 400 });
+    }
+    if (!body.propertyTypeId) {
+      return NextResponse.json({ error: "Property type is required." }, { status: 400 });
+    }
+    if (!body.categoryId) {
+      return NextResponse.json({ error: "Category is required." }, { status: 400 });
+    }
+    // Price is entered in whole rupees (expectedPrice). A body that only
+    // carries the legacy lakh figure (an un-migrated row being
+    // duplicated) is converted rather than rejected.
+    const detailsInput = {
+      ...body,
+      purpose: body.purpose ?? "Sale",
+      city: body.city ?? "Bengaluru",
+      expectedPrice:
+        body.expectedPrice ?? (Number(body.priceValueLakh) > 0 ? Math.round(Number(body.priceValueLakh) * 100000) : undefined),
+    };
+    const detailsError = validateDetailsBody(detailsInput);
+    if (detailsError) {
+      return NextResponse.json({ error: detailsError }, { status: 400 });
+    }
+
+    const propertyType = await prisma.propertyType.findUnique({
+      where: { id: body.propertyTypeId },
+      select: { name: true },
+    });
+    if (!propertyType) {
+      return NextResponse.json({ error: "Property type is required." }, { status: 400 });
+    }
+    const details = detailsToPrismaData(detailsInput, propertyKindFor(propertyType.name));
+    // Rupees are the source of truth; the lakh column and the display
+    // string are derived from them so nothing can drift.
+    const expectedPrice = Math.round(Number(detailsInput.expectedPrice));
+    const priceValueLakh = rupeesToLakh(expectedPrice);
+
     // Auto-generate Property ID: find the last property and increment
     const lastProperty = await prisma.property.findFirst({
       orderBy: { propertyId: "desc" },
@@ -122,19 +164,21 @@ export async function POST(req: Request) {
         slug,
         title: body.title,
         location: body.location,
-        price: body.price,
-        priceValueLakh: parseFloat(body.priceValueLakh || "0"),
+        price: priceDisplay(expectedPrice, details.purpose),
+        priceValueLakh,
         propertyTypeId: body.propertyTypeId,
         status: body.status || "UNPUBLISHED",
         featured: body.featured || "false",
         beds: parseInt(body.beds || "0"),
         baths: parseInt(body.baths || "0"),
-        area: body.area,
-        areaSqft: parseInt(body.areaSqft || "0"),
-        description: body.description,
-        address: body.address,
-        mapQuery: body.mapQuery,
+        area: body.area ?? "",
+        areaSqft: parseInt(body.areaSqft || "0") || 0,
+        description: body.description ?? "",
+        address: body.address ?? "",
+        mapQuery: body.mapQuery ?? "",
         categoryId: body.categoryId,
+        ...details,
+        expectedPrice,
         // "" (the wizard's "None" option) is not a valid Builder id —
         // Prisma needs an actual null to clear/skip the relation, not
         // an empty string, which would fail the foreign-key write.
@@ -201,6 +245,12 @@ export async function POST(req: Request) {
             propertyId: property.id,
           })),
         })
+      );
+    }
+
+    if (typeof body.videoUrl === "string" && body.videoUrl.trim()) {
+      followUpWrites.push(
+        prisma.propertyVideo.create({ data: { url: body.videoUrl.trim(), propertyId: property.id } })
       );
     }
 

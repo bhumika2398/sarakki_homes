@@ -23,27 +23,22 @@ import {
 } from "lucide-react";
 import { PropertyImageManager, type ManagedImage } from "@/components/admin/PropertyImageManager";
 import { ConfirmDialog } from "@/components/admin/ConfirmDialog";
-
-/** Reads the leading number out of the Price field — which now also
- *  accepts letters (e.g. "85 Lakh", "2.5 Crore") alongside a bare
- *  number, per the input-restriction requirement — the same way
- *  `parseFloat` (and the properties API route) already do: it stops at
- *  the first non-numeric character rather than rejecting the whole
- *  string like `Number()` would. Storage/display convention is
- *  unchanged; this only makes reading the value tolerate trailing text. */
-function parsePriceLakh(raw: string): number {
-  const n = parseFloat(raw);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/** Turns the single "Price (in Lakhs)" number into the display string a
- *  property card actually shows -- e.g. 85 -> "₹85 Lakh", 240 -> "₹2.40 Cr".
- *  Matches the "₹X.XX Cr" convention already used by existing listings. */
-function formatPriceDisplay(valueLakh: number): string {
-  if (!Number.isFinite(valueLakh) || valueLakh <= 0) return "Price on request";
-  if (valueLakh >= 100) return `₹${(valueLakh / 100).toFixed(2)} Cr`;
-  return `₹${valueLakh % 1 === 0 ? valueLakh : valueLakh.toFixed(1)} Lakh`;
-}
+import { LocalityCombobox } from "@/components/admin/LocalityCombobox";
+import { formatRupees, looksLikeLakhs } from "@/lib/formatPrice";
+import {
+  propertyDetailsShape,
+  propertyKindFor,
+  isFieldVisible,
+  PURPOSES,
+  OWNERSHIP_TYPES,
+  AVAILABILITY_STATUSES,
+  FURNISHING,
+  FACINGS,
+  YES_NO,
+  POWER_BACKUP,
+  NEARBY_FACILITY_OPTIONS,
+  AMENITY_OPTIONS,
+} from "@/lib/propertyDetails";
 
 // Form validation schema with Zod
 const propertySchema = z.object({
@@ -68,18 +63,6 @@ const propertySchema = z.object({
   // string (e.g. "₹ 85 Lakh" / "₹ 2.40 Cr") is now derived automatically
   // from this number in onSubmit below, so there's nothing left to type
   // twice and nothing that can drift out of sync between the two.
-  priceValueLakh: z
-    .string()
-    .min(1, "Price is required.")
-    // Numbers, letters, spaces and a decimal point only (e.g. "85",
-    // "85 Lakh", "2.5 Crore") — no symbols/emoji. Enforced both here
-    // (on Continue/Publish) and live while typing, via the input's own
-    // onChange filter below, which strips a disallowed character the
-    // instant it's typed rather than only complaining after the fact.
-    .refine(
-      (v) => /^[a-zA-Z0-9.\s]*$/.test(v),
-      "Only numbers, letters and a decimal point are allowed in Price — no symbols or special characters."
-    ),
   // Location, Address, Google Maps Location and Description all show no
   // asterisk in the UI, so — same rule as Builder above — they're
   // optional and must never block Continue/Publish. Property.location/
@@ -105,8 +88,18 @@ const propertySchema = z.object({
   // them are required.
   beds: z.string().optional(),
   baths: z.string().optional(),
+  // "Area Display Text" was removed from the form: the single numeric
+  // "Area (sqft)" below is the only input, and the display string stored
+  // in `area` is generated from it on submit.
   area: z.string().optional(),
-  areaSqft: z.string().optional(),
+  areaSqft: z
+    .string()
+    .optional()
+    .refine((v) => !v || /^\d+(\.\d+)?$/.test(v.trim()), "Area must be a positive number."),
+
+  // Listing details — shared with the API (src/lib/propertyDetails.ts) so
+  // client and server validate identically. Purpose + City are required.
+  ...propertyDetailsShape,
 
   // Media is managed outside this schema by PropertyImageManager (an
   // ordered array, not a single registered input) — see `galleryImages`.
@@ -139,6 +132,8 @@ interface PropertyWizardProps {
   categories: Array<{ id: string; title: string; slug: string }>;
   builders: Array<{ id: string; name: string }>;
   propertyTypes: Array<{ id: string; name: string }>;
+  /** Shared Bengaluru locality list (Locality table). */
+  localities: string[];
   initialData?: PropertyWizardInitialData;
 }
 
@@ -172,6 +167,7 @@ export function PropertyWizard({
   categories,
   builders: initialBuilders,
   propertyTypes: initialPropertyTypes,
+  localities,
   initialData,
 }: PropertyWizardProps) {
   const router = useRouter();
@@ -247,7 +243,6 @@ export function PropertyWizard({
       // real to check, rather than a pre-filled default the admin never
       // actually chose.
       propertyTypeId: "",
-      priceValueLakh: "",
       location: "",
       address: "",
       mapQuery: "",
@@ -267,6 +262,37 @@ export function PropertyWizard({
       baths: "",
       area: "",
       areaSqft: "",
+      purpose: "Sale" as const,
+      ownershipType: "",
+      availabilityStatus: "",
+      possessionDate: "",
+      locality: "",
+      city: "",
+      pincode: "",
+      landmark: "",
+      nearbyFacilities: [] as string[],
+      plotArea: "",
+      builtUpArea: "",
+      carpetArea: "",
+      dimLength: "",
+      dimWidth: "",
+      roadWidth: "",
+      totalFloors: "",
+      floorDetails: "",
+      balconies: "",
+      parkingCars: "",
+      parkingBikes: "",
+      propertyAge: "",
+      furnishing: "",
+      facing: "",
+      waterSupply: "",
+      electricity: "",
+      lift: "",
+      powerBackup: "",
+      amenities: [] as string[],
+      expectedPrice: "",
+      negotiable: "",
+      videoUrl: "",
       seoTitle: "",
       seoDescription: "",
       slug: "",
@@ -287,6 +313,28 @@ export function PropertyWizard({
 
   const selectedCategoryId = watch("categoryId");
   const formValues = watch();
+
+  // Which detail fields apply depends on the chosen Property Type (e.g.
+  // no bedrooms/floors for a plot). Driven by the type's name since the
+  // type list is admin-managed — see propertyKindFor.
+  const kind = propertyKindFor(propertyTypes.find((t) => t.id === formValues.propertyTypeId)?.name);
+  const show = (field: string) => isFieldVisible(kind, field);
+
+  // Collapsible sections on the Details step. Always mounted (just
+  // hidden) like the wizard steps themselves, so collapsing never drops
+  // a value. All sections pop open when validation fails so the
+  // offending field is visible.
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({
+    basic: true,
+    location: true,
+    area: false,
+    building: false,
+    utilities: false,
+    pricing: true,
+  });
+  const toggleSection = (id: string) => setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
+  const openAllSections = () =>
+    setOpenSections((prev) => Object.fromEntries(Object.keys(prev).map((k) => [k, true])));
 
   // Whether the Auction Details step should appear is driven by the
   // selected Category's slug ("bank-auctions"), not the free-standing
@@ -319,7 +367,13 @@ export function PropertyWizard({
   // Everything else on the merged "Property Details" step (Builder,
   // Location, Address, Google Maps Location, Description, Bedrooms/
   // Bathrooms/Area) is optional and must never hold up navigation.
-  const DETAILS_STEP_FIELDS = ["title", "propertyTypeId", "categoryId", "priceValueLakh"] as const;
+  const DETAILS_STEP_FIELDS = [
+    "title",
+    "propertyTypeId",
+    "categoryId",
+    "areaSqft",
+    ...Object.keys(propertyDetailsShape),
+  ] as unknown as Parameters<typeof trigger>[0];
 
   const handleNext = async () => {
     // Basic step validation before moving forward. This used to do its
@@ -339,6 +393,7 @@ export function PropertyWizard({
     if (currentStepKey === "details") {
       const isValid = await trigger(DETAILS_STEP_FIELDS);
       if (!isValid) {
+        openAllSections();
         setErrorMessage("Please fix the highlighted fields before continuing.");
         return;
       }
@@ -357,12 +412,17 @@ export function PropertyWizard({
       categoryId: "Category",
       builderId: "Builder",
       propertyTypeId: "Property Type",
-      priceValueLakh: "Price",
       location: "Location",
       address: "Address",
       mapQuery: "Google Maps Location",
       description: "Description",
-      area: "Area Display Text",
+      areaSqft: "Area (sqft)",
+      purpose: "Property Purpose",
+      city: "City",
+      pincode: "PIN Code",
+      possessionDate: "Possession Date",
+      expectedPrice: "Price",
+      videoUrl: "Video link",
     };
     const names = Object.keys(formErrors)
       .map((key) => labels[key] || key)
@@ -372,6 +432,7 @@ export function PropertyWizard({
         ? `Please fix the following before publishing: ${names}.`
         : "Please review the highlighted fields before publishing."
     );
+    openAllSections();
     setCurrentStep(0);
   };
 
@@ -485,14 +546,23 @@ export function PropertyWizard({
       // on an existing listing), which is exactly the ambiguity this
       // wizard rework is meant to remove.
       const status = submitIntentRef.current === "draft" ? "UNPUBLISHED" : "PUBLISHED";
+      // Display string for the single numeric Area (sqft) input.
+      const areaNum = parseFloat(data.areaSqft ?? "");
+      const hasArea = Number.isFinite(areaNum) && areaNum > 0;
       const payload = {
         ...data,
-        // The DB still stores both a numeric priceValueLakh (used for
-        // budget-range filtering/sorting on the public site) and a
-        // display string (what a property card actually shows) -- the
-        // form only collects the number now, so the string is generated
-        // here rather than typed by hand.
-        price: formatPriceDisplay(parsePriceLakh(data.priceValueLakh)),
+        area: hasArea ? `${Math.round(areaNum).toLocaleString("en-IN")} sq.ft` : "",
+        areaSqft: hasArea ? String(Math.round(areaNum)) : "0",
+        // Bedrooms/bathrooms don't apply to every property type; the
+        // columns are NOT NULL so a hidden field is saved as 0.
+        beds: show("beds") ? data.beds : "0",
+        baths: show("baths") ? data.baths : "0",
+        // The server derives the display string ("₹1,25,00,000") and the
+        // legacy lakh column from expectedPrice (whole rupees).
+        // A picked locality fills the short-address line when it was left
+        // empty, so the website's location filter (matches the start of
+        // `location`) finds the listing.
+        location: data.location?.trim() || (data.locality ? `${data.locality}, ${data.city}` : ""),
         images: galleryImages,
         status,
       };
@@ -625,9 +695,9 @@ export function PropertyWizard({
                 fields, same validation, just one scroll instead of an
                 extra click-through. */}
             <div className={cn("space-y-8", currentStepKey !== "details" && "hidden")}>
-                <StepHeading title="Property Details" description="Core listing parameters for buyers." />
+                <StepHeading title="Property Details" description="Core listing parameters for buyers. Sections can be collapsed; only fields marked * are required." />
 
-                <FieldGroup title="Property Basics">
+                <CollapsibleGroup title="Basic" open={openSections.basic} onToggle={() => toggleSection("basic")}>
                   <Field label="Property Name" required error={errors.title}>
                     <input
                       type="text"
@@ -786,36 +856,36 @@ export function PropertyWizard({
                       </div>
                     )}
                   </Field>
-                </FieldGroup>
-
-                <FieldGroup title="Pricing">
-                  {/* Was two fields (a free-text display string + this
-                      number) that had to be kept in sync by hand -- a
-                      single required value now, with the display string
-                      ("₹ 85 Lakh" / "₹ 2.40 Cr") generated automatically
-                      from it in onSubmit below. */}
-                  <Field label="Price" required error={errors.priceValueLakh}>
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      {...register("priceValueLakh", {
-                        // Belt-and-suspenders with the zod .refine above:
-                        // strip any disallowed character the moment it's
-                        // typed (including a paste), so an invalid one
-                        // never actually lands in the field rather than
-                        // being typed and then flagged after the fact.
-                        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
-                          const filtered = e.target.value.replace(/[^a-zA-Z0-9.\s]/g, "");
-                          if (filtered !== e.target.value) e.target.value = filtered;
-                        },
-                      })}
-                      className="crm-input"
-                      placeholder="e.g. 85 for ₹85 Lakh, 240 for ₹2.4 Cr"
-                    />
+                  <Field label="Property Purpose" required error={errors.purpose}>
+                    <select {...register("purpose")} className="crm-select">
+                      {PURPOSES.map((v) => (
+                        <option key={v} value={v}>{v}</option>
+                      ))}
+                    </select>
                   </Field>
-                </FieldGroup>
 
-                <FieldGroup title="Location">
+                  <Field label="Ownership Type" error={errors.ownershipType}>
+                    <select {...register("ownershipType")} className="crm-select">
+                      <option value="">Select</option>
+                      <EnumOptions values={OWNERSHIP_TYPES} />
+                    </select>
+                  </Field>
+
+                  <Field label="Availability Status" error={errors.availabilityStatus}>
+                    <select {...register("availabilityStatus")} className="crm-select">
+                      <option value="">Select</option>
+                      <EnumOptions values={AVAILABILITY_STATUSES} />
+                    </select>
+                  </Field>
+
+                  {formValues.availabilityStatus === "Under Construction" && (
+                    <Field label="Possession Date" error={errors.possessionDate}>
+                      <input type="date" {...register("possessionDate")} className="crm-input" />
+                    </Field>
+                  )}
+                </CollapsibleGroup>
+
+                <CollapsibleGroup title="Location" open={openSections.location} onToggle={() => toggleSection("location")}>
                   <Field label="Location (Short Address)" span2 error={errors.location}>
                     <input
                       type="text"
@@ -842,9 +912,229 @@ export function PropertyWizard({
                       placeholder="e.g. Prestige Shantiniketan, Whitefield, Bengaluru"
                     />
                   </Field>
-                </FieldGroup>
+                  <Field label="Locality" error={errors.locality}>
+                    <LocalityCombobox
+                      value={formValues.locality ?? ""}
+                      onChange={(next) => setValue("locality", next, { shouldDirty: true })}
+                      options={localities}
+                    />
+                  </Field>
 
-                <FieldGroup title="Description">
+                  <Field label="City" required error={errors.city}>
+                    <input type="text" {...register("city")} className="crm-input" placeholder="e.g. Bengaluru" />
+                  </Field>
+
+                  <Field label="PIN Code" error={errors.pincode}>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      {...register("pincode", {
+                        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+                          const digits = e.target.value.replace(/\D/g, "");
+                          if (digits !== e.target.value) e.target.value = digits;
+                        },
+                      })}
+                      className="crm-input"
+                      placeholder="6-digit PIN code"
+                    />
+                  </Field>
+
+                  <Field label="Landmark" error={errors.landmark}>
+                    <input type="text" {...register("landmark")} className="crm-input" placeholder="e.g. Near Forum Mall" />
+                  </Field>
+
+                  <Field label="Nearby Facilities" span2>
+                    <ChipSelect
+                      options={NEARBY_FACILITY_OPTIONS}
+                      value={formValues.nearbyFacilities ?? []}
+                      onChange={(next) => setValue("nearbyFacilities", next, { shouldDirty: true })}
+                    />
+                  </Field>
+                </CollapsibleGroup>
+
+                <CollapsibleGroup title="Area & Dimensions" open={openSections.area} onToggle={() => toggleSection("area")}>
+                  {/* Replaces the old "Area Display Text" + "Area in Sqft
+                      (Value)" pair. The display text ("3,200 sq.ft") is now
+                      generated from this number in onSubmit. */}
+                  <Field label="Area (sqft)" error={errors.areaSqft}>
+                    <input type="number" min={0} step="any" {...register("areaSqft")} className="crm-input" placeholder="e.g. 3200" />
+                  </Field>
+
+                  {show("plotArea") && (
+                    <Field label="Plot Area (sqft)" error={errors.plotArea}>
+                      <input type="number" min={0} step="any" {...register("plotArea")} className="crm-input" placeholder="e.g. 2400" />
+                    </Field>
+                  )}
+
+                  {show("builtUpArea") && (
+                    <Field label="Built-up Area (sqft)" error={errors.builtUpArea}>
+                      <input type="number" min={0} step="any" {...register("builtUpArea")} className="crm-input" placeholder="e.g. 2800" />
+                    </Field>
+                  )}
+
+                  {show("carpetArea") && (
+                    <Field label="Carpet Area (sqft)" error={errors.carpetArea}>
+                      <input type="number" min={0} step="any" {...register("carpetArea")} className="crm-input" placeholder="e.g. 2200" />
+                    </Field>
+                  )}
+
+                  {show("dimLength") && (
+                    <Field label="Property Dimensions (Length × Width, ft)" error={errors.dimLength ?? errors.dimWidth}>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min={0} step="any" {...register("dimLength")} className="crm-input" placeholder="Length" aria-label="Length in feet" />
+                        <span className="text-crm-text-muted" aria-hidden="true">×</span>
+                        <input type="number" min={0} step="any" {...register("dimWidth")} className="crm-input" placeholder="Width" aria-label="Width in feet" />
+                      </div>
+                    </Field>
+                  )}
+
+                  <Field label="Road Width (ft)" error={errors.roadWidth}>
+                    <input type="number" min={0} step="any" {...register("roadWidth")} className="crm-input" placeholder="e.g. 40" />
+                  </Field>
+                </CollapsibleGroup>
+
+                  <CollapsibleGroup
+                    title={kind === "plot" ? "Plot Details" : "Building Details"}
+                    open={openSections.building}
+                    onToggle={() => toggleSection("building")}
+                  >
+                    {show("beds") && (
+                      <Field label="Bedrooms (BHK)">
+                        <input type="number" min={0} {...register("beds")} className="crm-input" placeholder="0" />
+                      </Field>
+                    )}
+
+                    {show("baths") && (
+                      <Field label="Bathrooms">
+                        <input type="number" min={0} {...register("baths")} className="crm-input" placeholder="0" />
+                      </Field>
+                    )}
+
+                    {show("balconies") && (
+                      <Field label="Balconies" error={errors.balconies}>
+                        <input type="number" min={0} {...register("balconies")} className="crm-input" placeholder="0" />
+                      </Field>
+                    )}
+
+                    {show("parkingCars") && (
+                      <Field label="Parking (Car / Bike)" error={errors.parkingCars ?? errors.parkingBikes}>
+                        <div className="flex items-center gap-2">
+                          <input type="number" min={0} {...register("parkingCars")} className="crm-input" placeholder="Cars" aria-label="Car parking count" />
+                          <input type="number" min={0} {...register("parkingBikes")} className="crm-input" placeholder="Bikes" aria-label="Bike parking count" />
+                        </div>
+                      </Field>
+                    )}
+
+                    {show("totalFloors") && (
+                      <Field label="Total Floors">
+                        <input type="text" {...register("totalFloors")} className="crm-input" placeholder="e.g. Ground + 4" />
+                      </Field>
+                    )}
+
+                    {show("floorDetails") && (
+                      <Field label="Floor Details">
+                        <input type="text" {...register("floorDetails")} className="crm-input" placeholder="e.g. 3rd floor of 5" />
+                      </Field>
+                    )}
+
+                    {show("propertyAge") && (
+                      <Field label="Property Age">
+                        <input type="text" {...register("propertyAge")} className="crm-input" placeholder="e.g. 3 years" />
+                      </Field>
+                    )}
+
+                    {show("furnishing") && (
+                      <Field label="Furnishing Status" error={errors.furnishing}>
+                        <select {...register("furnishing")} className="crm-select">
+                          <option value="">Select</option>
+                          <EnumOptions values={FURNISHING} />
+                        </select>
+                      </Field>
+                    )}
+
+                    <Field label="Facing" error={errors.facing}>
+                      <select {...register("facing")} className="crm-select">
+                        <option value="">Select</option>
+                        <EnumOptions values={FACINGS} />
+                      </select>
+                    </Field>
+                  </CollapsibleGroup>
+
+                <CollapsibleGroup title="Utilities & Amenities" open={openSections.utilities} onToggle={() => toggleSection("utilities")}>
+                  <Field label="Water Supply">
+                    <input type="text" {...register("waterSupply")} className="crm-input" placeholder="e.g. BWSSB + Borewell" />
+                  </Field>
+
+                  <Field label="Electricity Connection">
+                    <input type="text" {...register("electricity")} className="crm-input" placeholder="e.g. BESCOM, 3-phase" />
+                  </Field>
+
+                  {show("lift") && (
+                    <Field label="Lift" error={errors.lift}>
+                      <select {...register("lift")} className="crm-select">
+                        <option value="">Select</option>
+                        <EnumOptions values={YES_NO} />
+                      </select>
+                    </Field>
+                  )}
+
+                  {show("powerBackup") && (
+                    <Field label="Power Backup" error={errors.powerBackup}>
+                      <select {...register("powerBackup")} className="crm-select">
+                        <option value="">Select</option>
+                        <EnumOptions values={POWER_BACKUP} />
+                      </select>
+                    </Field>
+                  )}
+
+                  <Field label="Amenities" span2>
+                    <ChipSelect
+                      options={AMENITY_OPTIONS}
+                      value={formValues.amenities ?? []}
+                      onChange={(next) => setValue("amenities", next, { shouldDirty: true })}
+                    />
+                  </Field>
+                </CollapsibleGroup>
+
+                <CollapsibleGroup title="Pricing & Description" open={openSections.pricing} onToggle={() => toggleSection("pricing")}>
+                  {/* Whole rupees, entered as the actual amount (e.g. 12500000).
+                      This is the single price field; the website display
+                      string and the legacy lakh value are derived from it. */}
+                  <Field label={formValues.purpose === "Rent" ? "Monthly Rent (₹)" : "Price (₹)"} required error={errors.expectedPrice} span2>
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      {...register("expectedPrice", {
+                        // Digits only, live — commas/decimals/symbols never land in the field.
+                        onChange: (e: React.ChangeEvent<HTMLInputElement>) => {
+                          const digits = e.target.value.replace(/\D/g, "");
+                          if (digits !== e.target.value) e.target.value = digits;
+                        },
+                      })}
+                      className="crm-input"
+                      placeholder="e.g. 12500000"
+                    />
+                    {formValues.expectedPrice && Number(formValues.expectedPrice) > 0 && (
+                      <p className="mt-1 text-[13px] text-crm-text-secondary">
+                        Will show as <strong>{formatRupees(Number(formValues.expectedPrice))}</strong>
+                        {formValues.purpose === "Rent" ? " / month" : ""}
+                      </p>
+                    )}
+                    {looksLikeLakhs(Number(formValues.expectedPrice), formValues.purpose) && (
+                      <p className="mt-1 text-[13px] text-amber-500">
+                        Looks like lakhs? Enter the full amount in rupees — 85 lakh is 8500000, not 85.
+                      </p>
+                    )}
+                  </Field>
+
+                  <Field label="Negotiable" error={errors.negotiable}>
+                    <select {...register("negotiable")} className="crm-select">
+                      <option value="">Select</option>
+                      <EnumOptions values={YES_NO} />
+                    </select>
+                  </Field>
+
                   <Field label="Overview" span2 error={errors.description}>
                     <textarea
                       rows={5}
@@ -853,35 +1143,7 @@ export function PropertyWizard({
                       placeholder="Enter a descriptive overview of the property..."
                     />
                   </Field>
-                </FieldGroup>
-
-                <FieldGroup title="Measurements">
-                  <Field label="Bedrooms">
-                    <input type="number" {...register("beds")} className="crm-input" placeholder="0" />
-                  </Field>
-
-                  <Field label="Bathrooms">
-                    <input type="number" {...register("baths")} className="crm-input" placeholder="0" />
-                  </Field>
-
-                  <Field label="Area Display Text" error={errors.area}>
-                    <input
-                      type="text"
-                      {...register("area")}
-                      className="crm-input"
-                      placeholder="e.g. 3,200 sq.ft"
-                    />
-                  </Field>
-
-                  <Field label="Area in Sqft (Value)">
-                    <input
-                      type="number"
-                      {...register("areaSqft")}
-                      className="crm-input"
-                      placeholder="e.g. 3200"
-                    />
-                  </Field>
-                </FieldGroup>
+                </CollapsibleGroup>
             </div>
 
             {/* Step: Auction Details — only ever shown when the selected
@@ -956,6 +1218,19 @@ export function PropertyWizard({
                 <FieldGroup title="Property Images">
                   <PropertyImageManager images={galleryImages} onChange={setGalleryImages} />
                 </FieldGroup>
+
+                <FieldGroup title="Video (optional)">
+                  {/* Link only (YouTube / Vimeo / hosted file). Direct video
+                      upload would need its own Storage bucket + route. */}
+                  <Field label="Video link" span2 error={errors.videoUrl}>
+                    <input
+                      type="url"
+                      {...register("videoUrl")}
+                      className="crm-input"
+                      placeholder="https://www.youtube.com/watch?v=…"
+                    />
+                  </Field>
+                </FieldGroup>
             </div>
 
             {/* Step: Review & Publish */}
@@ -975,7 +1250,7 @@ export function PropertyWizard({
                     <div className="text-right">
                       <span className="crm-label">Price</span>
                       <p className="mt-1.5 font-crm-display text-2xl font-semibold text-crm-gold">
-                        {formValues.priceValueLakh ? formatPriceDisplay(parsePriceLakh(formValues.priceValueLakh)) : "N/A"}
+                        {formValues.expectedPrice ? formatRupees(Number(formValues.expectedPrice)) : "N/A"}
                       </p>
                     </div>
                   </div>
@@ -987,7 +1262,9 @@ export function PropertyWizard({
                     />
                     <ReviewStat label="Bedrooms" value={formValues.beds || "0"} />
                     <ReviewStat label="Bathrooms" value={formValues.baths || "0"} />
-                    <ReviewStat label="Area" value={formValues.area || "N/A"} />
+                    <ReviewStat label="Area" value={formValues.areaSqft ? `${formValues.areaSqft} sq.ft` : "N/A"} />
+                    <ReviewStat label="Purpose" value={formValues.purpose || "N/A"} />
+                    <ReviewStat label="City" value={formValues.city || "N/A"} />
                   </div>
                 </div>
 
@@ -1163,6 +1440,86 @@ function FieldGroup({ title, children }: { title: string; children: React.ReactN
         {title}
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">{children}</div>
+    </div>
+  );
+}
+
+function CollapsibleGroup({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-sm border border-crm-border">
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between px-5 py-4 text-left"
+      >
+        <span className="text-[12px] font-bold uppercase tracking-[0.12em] text-crm-gold">{title}</span>
+        <ChevronDown
+          size={16}
+          className={cn("text-crm-text-muted transition-transform duration-200", open && "rotate-180")}
+        />
+      </button>
+      <div className={cn("border-t border-crm-border p-5", !open && "hidden")}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function EnumOptions({ values }: { values: readonly string[] }) {
+  return (
+    <>
+      {values.map((v) => (
+        <option key={v} value={v}>
+          {v}
+        </option>
+      ))}
+    </>
+  );
+}
+
+/** Multi-select as toggle chips (wraps cleanly on mobile). */
+function ChipSelect({
+  options,
+  value,
+  onChange,
+}: {
+  options: readonly string[];
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {options.map((opt) => {
+        const on = value.includes(opt);
+        return (
+          <button
+            key={opt}
+            type="button"
+            aria-pressed={on}
+            onClick={() => onChange(on ? value.filter((v) => v !== opt) : [...value, opt])}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-sm border px-3 py-2 text-[13px] font-medium transition-colors",
+              on
+                ? "border-crm-gold bg-crm-gold/15 text-crm-text"
+                : "border-crm-border text-crm-text-secondary hover:border-crm-gold/60"
+            )}
+          >
+            {on && <Check size={12} strokeWidth={3} />}
+            {opt}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -103,14 +103,14 @@ export const COLUMN_DEFS: ColumnDef[] = [
     field: "price",
     type: "string",
     required: true,
-    description: "The price as shown to customers, e.g. \"₹1.25 Cr\".",
+    description: "Full price in rupees, e.g. 12500000 (shown as ₹1,25,00,000). Text with a unit such as \"1.25 Cr\" or \"93 Lakhs\" is converted.",
   },
   {
     header: "Price in Lakh",
     field: "priceValueLakh",
     type: "number",
     required: false,
-    description: "Numeric price in lakhs, e.g. 125 for ₹1.25 Cr — used for sorting/filtering on the website.",
+    description: "Deprecated — derived from Price. If filled it overrides Price (old sheets keep working).",
   },
   {
     header: "Location",

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireRole, CAN } from "@/lib/authz";
 import { parseUploadedWorkbook } from "@/lib/propertyImport/workbook";
 import { validateAndResolveRows, type ReferenceData } from "@/lib/propertyImport/validateRows";
+import { getLocalityNames } from "@/lib/localities";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB — hundreds of text rows, plenty of headroom
 const MAX_ROWS = 5000; // sanity cap so a malformed/huge file can't hang the request
@@ -48,6 +49,7 @@ export async function POST(req: Request) {
       );
     }
 
+    const localities = await getLocalityNames();
     const [categories, builders, propertyTypes, existingProperties] = await Promise.all([
       prisma.category.findMany({ select: { id: true, title: true } }),
       prisma.builder.findMany({ select: { id: true, name: true } }),
@@ -59,6 +61,7 @@ export async function POST(req: Request) {
       categories: new Map(categories.map((c) => [c.title.toLowerCase().trim(), c])),
       builders: new Map(builders.map((b) => [b.name.toLowerCase().trim(), b])),
       propertyTypes: new Map(propertyTypes.map((t) => [t.name.toLowerCase().trim(), t])),
+      localities,
       existingPropertyIds: new Map(existingProperties.map((p) => [p.propertyId, p.id])),
     };
 

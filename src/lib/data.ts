@@ -348,22 +348,16 @@ export const LEGAL_SERVICES = [
       {
         profile: "Salaried",
         documents: [
-          "3 Months Salary Slips",
-          "6 Months Bank Statement",
-          "Form 16 (Two Years)",
-          "PAN Card",
-          "Aadhar Card",
+          "3 months' salary slips",
+          "6 months' bank statement",
+          "PAN card",
+          "Aadhar card",
+          "Form 16 (last 2 years) OR 2 years' ITR",
         ],
       },
       {
         profile: "Self Employed",
-        documents: [
-          "Business Proof",
-          "One Year Bank Statement",
-          "PAN Card",
-          "Aadhar Card",
-          "GST Number (if applicable)",
-        ],
+        documents: ["2 years' ITR", "1 year's bank statement", "Business proof", "PAN card", "Aadhar card"],
       },
     ],
   },
@@ -549,10 +543,10 @@ export const PROPERTIES: Property[] = [];
 
 export const BUDGET_RANGES = [
   { label: "Any Budget", min: 0, max: Infinity },
-  { label: "Under ₹1.5 Cr", min: 0, max: 150 },
-  { label: "₹1.5 Cr – ₹3 Cr", min: 150, max: 300 },
-  { label: "₹3 Cr – ₹5 Cr", min: 300, max: 500 },
-  { label: "Above ₹5 Cr", min: 500, max: Infinity },
+  { label: "Under ₹1,50,00,000", min: 0, max: 150 },
+  { label: "₹1,50,00,000 – ₹3,00,00,000", min: 150, max: 300 },
+  { label: "₹3,00,00,000 – ₹5,00,00,000", min: 300, max: 500 },
+  { label: "Above ₹5,00,00,000", min: 500, max: Infinity },
 ];
 
 export const PILLARS = [

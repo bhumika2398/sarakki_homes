@@ -1,6 +1,19 @@
 import { prisma } from "@/lib/prisma";
 import { PropertyWizard } from "@/components/admin/PropertyWizard";
 import { notFound } from "next/navigation";
+import { parseJsonList } from "@/lib/propertyDetails";
+import { getLocalityNames } from "@/lib/localities";
+
+/** Older listings stored area only as display text ("3,200 sq.ft") with
+ *  areaSqft left at 0. Recover the number from the text so the single
+ *  "Area (sqft)" field opens pre-filled instead of blank. */
+function resolveAreaSqft(areaSqft: number, area: string): string {
+  if (areaSqft > 0) return String(areaSqft);
+  const m = area.replace(/,/g, "").match(/d+(.d+)?/);
+  return m ? String(Math.round(parseFloat(m[0]))) : "";
+}
+
+const str = (v: string | number | null | undefined) => (v == null ? "" : String(v));
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +31,7 @@ export default async function EditPropertyPage({
       auctionInfo: true,
       loanEligibility: true,
       images: { orderBy: { order: "asc" } },
+      videos: true,
     },
   });
 
@@ -36,6 +50,8 @@ export default async function EditPropertyPage({
     orderBy: { name: "asc" },
   });
 
+  const localities = await getLocalityNames();
+
   const propertyTypes = await prisma.propertyType.findMany({
     select: { id: true, name: true },
     orderBy: { name: "asc" },
@@ -49,7 +65,6 @@ export default async function EditPropertyPage({
     builderId: property.builderId ?? "",
     propertyTypeId: property.propertyTypeId,
     price: property.price,
-    priceValueLakh: String(property.priceValueLakh),
     location: property.location,
     address: property.address,
     mapQuery: property.mapQuery,
@@ -59,7 +74,40 @@ export default async function EditPropertyPage({
     beds: String(property.beds),
     baths: String(property.baths),
     area: property.area,
-    areaSqft: String(property.areaSqft),
+    areaSqft: resolveAreaSqft(property.areaSqft, property.area),
+    purpose: property.purpose as "Sale" | "Rent",
+    ownershipType: str(property.ownershipType),
+    availabilityStatus: str(property.availabilityStatus),
+    possessionDate: str(property.possessionDate),
+    locality: str(property.locality),
+    city: property.city,
+    pincode: str(property.pincode),
+    landmark: str(property.landmark),
+    nearbyFacilities: parseJsonList(property.nearbyFacilities),
+    plotArea: str(property.plotArea),
+    builtUpArea: str(property.builtUpArea),
+    carpetArea: str(property.carpetArea),
+    dimLength: str(property.dimLength),
+    dimWidth: str(property.dimWidth),
+    roadWidth: str(property.roadWidth),
+    totalFloors: str(property.totalFloors),
+    floorDetails: str(property.floorDetails),
+    balconies: str(property.balconies),
+    parkingCars: str(property.parkingCars),
+    parkingBikes: str(property.parkingBikes),
+    propertyAge: str(property.propertyAge),
+    furnishing: str(property.furnishing),
+    facing: str(property.facing),
+    waterSupply: str(property.waterSupply),
+    electricity: str(property.electricity),
+    lift: str(property.lift),
+    powerBackup: str(property.powerBackup),
+    amenities: parseJsonList(property.amenities),
+    // Rupees are the source of truth; an un-migrated row falls back to
+    // its lakh figure converted (see prisma/backfill-price-rupees.ts).
+    expectedPrice: String(property.expectedPrice ?? Math.round(property.priceValueLakh * 100000)),
+    negotiable: str(property.negotiable),
+    videoUrl: property.videos[0]?.url ?? "",
     // Full ordered gallery, not just the cover — the wizard now manages
     // every image, so passing only images[0] here would silently drop
     // the rest of an existing property's photos on save.
@@ -101,6 +149,7 @@ export default async function EditPropertyPage({
         categories={categories}
         builders={builders}
         propertyTypes={propertyTypes}
+        localities={localities}
         initialData={initialData}
       />
     </div>

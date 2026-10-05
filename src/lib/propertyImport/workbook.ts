@@ -2,6 +2,7 @@ import { Readable } from "stream";
 import ExcelJS from "exceljs";
 import { ALL_HEADERS, COLUMN_DEFS, PROPERTY_ID_HEADER } from "./columnMapping";
 import { resolveFieldName, type CanonicalField } from "./fieldResolver";
+import { formatRupees } from "@/lib/formatPrice";
 
 export interface RawImportRow {
   /** Human-readable location in the file, for error/summary messages —
@@ -225,8 +226,8 @@ export async function buildTemplateWorkbook(reference: {
     "Property Type": reference.propertyTypes[0] ?? "Flat",
     Category: reference.categories[0] ?? "Rental Income Properties",
     Builder: reference.builders[0] ?? "",
-    Price: "₹1.25 Cr",
-    "Price in Lakh": "125",
+    Price: "12500000",
+    "Price in Lakh": "",
     Location: "Whitefield",
     Address: "123, Lakeside Habitat, Whitefield, Bengaluru",
     "Google Maps Location": "Prestige Lakeside Habitat Whitefield Bengaluru",
@@ -279,6 +280,7 @@ export async function buildExportWorkbook(
     builderName: string | null;
     price: string;
     priceValueLakh: number;
+    expectedPrice?: number | null;
     location: string;
     address: string;
     mapQuery: string;
@@ -303,8 +305,10 @@ export async function buildExportWorkbook(
       "Property Type": p.type,
       Category: p.categoryTitle,
       Builder: p.builderName ?? "",
-      Price: p.price,
-      "Price in Lakh": String(p.priceValueLakh),
+      Price: p.expectedPrice != null ? formatRupees(p.expectedPrice) : p.price,
+      // Deprecated column left blank on export: a re-import would otherwise
+      // let this rounded figure override the exact rupee Price above.
+      "Price in Lakh": "",
       Location: p.location,
       Address: p.address,
       "Google Maps Location": p.mapQuery,

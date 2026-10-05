@@ -48,6 +48,10 @@ export const CAN = {
    *  editors and sales staff — e.g. picking a category when logging an
    *  enquiry's requirement. Not sensitive, so broader than MANAGE_CONTENT. */
   VIEW_CATEGORIES: ["ADMIN", "MANAGER", "CONTENT_MANAGER", "SALES_EXECUTIVE"] as Role[],
+  /** Correcting recorded lead details (name, phone, email, ...) in place.
+   *  Narrower than MANAGE_CRM: a wrong phone number changes who the lead
+   *  is, so it's an admin/manager action with an audit trail. */
+  CORRECT_LEADS: ["ADMIN", "MANAGER"] as Role[],
   /** Revenue figures and commission data. */
   VIEW_REVENUE: ["ADMIN", "MANAGER"] as Role[],
   /** Any authenticated staff member. */

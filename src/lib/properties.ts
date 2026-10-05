@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import type { Property, MediaTone, PropertyCategorySlug } from "@/lib/data";
 import { safeDbCall } from "@/lib/db-safe";
+import { buildDetailSections, parseJsonList, propertyKindFor, type DetailSection } from "@/lib/propertyDetails";
 
 // Every exported query below is wrapped in unstable_cache (Next's
 // persistent Data Cache, keyed separately from route-level `revalidate`)
@@ -101,7 +102,7 @@ function toPublicProperty(p: DbProperty): Property {
     description: p.description,
     image: p.images[0]?.url,
     gallery: [(p.category.tone as MediaTone) || "warm"],
-    amenities: [],
+    amenities: parseJsonList(p.amenities),
     investmentHighlights: [],
     auctionInfo: p.auctionInfo
       ? {
@@ -300,12 +301,16 @@ const getCachedPropertyBySlug = unstable_cache(
 
 export async function getPropertyBySlug(
   slug: string
-): Promise<{ property: Property; galleryImages: string[] } | null> {
+): Promise<{ property: Property; galleryImages: string[]; details: DetailSection[] } | null> {
   return safeDbCall(
     async () => {
       const row = await getCachedPropertyBySlug(slug);
       if (!row) return null;
-      return { property: toPublicProperty(row), galleryImages: getGalleryImages(row) };
+      return {
+        property: toPublicProperty(row),
+        galleryImages: getGalleryImages(row),
+        details: buildDetailSections(row, propertyKindFor(row.propertyType.name)),
+      };
     },
     null,
     "getPropertyBySlug"

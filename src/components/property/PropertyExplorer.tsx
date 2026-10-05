@@ -11,7 +11,7 @@ import { PropertyGrid } from "@/components/property/PropertyGrid";
 import { PropertyList } from "@/components/property/PropertyList";
 import { BUDGET_RANGES, type Property } from "@/lib/data";
 
-export function PropertyExplorer({ properties }: { properties: Property[] }) {
+export function PropertyExplorer({ properties, localities }: { properties: Property[]; localities: string[] }) {
   // Pre-fill filters from the URL so an external link lands on an
   // already-filtered grid, not just the generic listing page:
   // ?category=<slug> from the header's Properties dropdown/category
@@ -58,18 +58,13 @@ export function PropertyExplorer({ properties }: { properties: Property[] }) {
     return result;
   }, [properties, filters]);
 
-  const locations = useMemo(
-    () => Array.from(new Set(properties.map((p) => p.location.split(",")[0]))).sort(),
-    [properties]
-  );
-
   return (
     <div className="flex flex-col gap-8">
       <PropertyFilters
         filters={filters}
         onChange={setFilters}
         resultCount={filtered.length}
-        locations={locations}
+        locations={localities}
       />
       {filters.view === "list" ? (
         <PropertyList properties={filtered} onReset={() => setFilters(DEFAULT_FILTERS)} />

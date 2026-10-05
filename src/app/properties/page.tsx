@@ -6,6 +6,7 @@ import { Container, Section } from "@/components/ui/Container";
 import { Eyebrow } from "@/components/ui/Eyebrow";
 import { PropertyExplorer } from "@/components/property/PropertyExplorer";
 import { getPublishedProperties } from "@/lib/properties";
+import { getLocalityNames } from "@/lib/localities";
 
 // Property listings are admin-managed and can change anytime — re-fetch
 // from the database at most once a minute rather than only at build time.
@@ -18,7 +19,7 @@ export const metadata: Metadata = {
 };
 
 export default async function PropertiesPage() {
-  const properties = await getPublishedProperties();
+  const [properties, localities] = await Promise.all([getPublishedProperties(), getLocalityNames()]);
 
   return (
     <>
@@ -46,7 +47,7 @@ export default async function PropertiesPage() {
         <Section className="bg-[#EDE6D6] !py-12 md:!py-16">
           <Container>
             <Suspense fallback={null}>
-              <PropertyExplorer properties={properties} />
+              <PropertyExplorer properties={properties} localities={localities} />
             </Suspense>
           </Container>
         </Section>
